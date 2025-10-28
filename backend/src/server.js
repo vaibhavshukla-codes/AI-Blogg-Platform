@@ -1,3 +1,4 @@
+// src/server.js
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -26,24 +27,28 @@ const app = express();
 
 app.set('trust proxy', 1);
 
-// Configure CORS to allow both Vite dev ports and production
+// ----- CORS config (robust, production-ready) -----
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:3000',
+  process.env.FRONTEND_URL            // e.g. https://ai-blogg-platform.vercel.app
+].filter(Boolean);
+
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
+    // optional debug log: uncomment while troubleshooting
+    // console.log('CORS origin:', origin);
+
+    // allow non-browser requests (curl, server-to-server) that have no origin
     if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'http://localhost:3000',
-      process.env.FRONTEND_URL
-    ].filter(Boolean);
-    
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
+
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+
+    // Optionally allow Vercel preview domains (uncomment to enable)
+    // if (origin.endsWith('.vercel.app')) return callback(null, true);
+
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   optionsSuccessStatus: 200
@@ -63,23 +68,21 @@ if (process.env.NODE_ENV !== 'test') {
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300 });
 app.use('/api', limiter);
 
+// ----- Root + health endpoints -----
+app.get('/', (req, res) => {
+  return res.status(200).json({ message: 'API is running. Use /api routes.' });
+});
+
 app.get('/api/health', async (req, res) => {
   try {
-    // Check if MongoDB is connected
     const dbStatus = mongoose.connection.readyState;
-    const dbStatusMap = {
-      0: 'disconnected',
-      1: 'connected',
-      2: 'connecting',
-      3: 'disconnecting'
-    };
+    const dbStatusMap = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
 
-    // Perform a database ping
     if (dbStatus === 1) {
       await mongoose.connection.db.admin().ping();
     }
 
-    res.json({ 
+    return res.json({
       status: 'ok',
       database: {
         status: dbStatusMap[dbStatus],
@@ -89,7 +92,7 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(503).json({ 
+    return res.status(503).json({
       status: 'error',
       message: 'Database connection issue',
       error: error.message
@@ -97,6 +100,7 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// ----- API routes -----
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);
@@ -110,33 +114,29 @@ app.use('/api/ai', aiRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
+// ----- Start server after DB connection -----
 const PORT = process.env.PORT || 5001;
 
 connectDb()
   .then(async () => {
     console.log('✅ Database connection established');
-    
-    // Verify we can perform operations
+
     try {
       const collections = await mongoose.connection.db.listCollections().toArray();
-      console.log('📚 Available collections:', collections.map(c => c.name).join(', ') || 'None (will be created on first use)');
+      console.log('📚 Available collections:', collections.map(c => c.name).join(', ') || 'None');
     } catch (e) {
       console.error('⚠️  Could not list collections:', e.message);
     }
-    
+
     app.listen(PORT, () => {
       console.log('🚀 Server running on port', PORT);
-      console.log('📍 API URL: http://localhost:' + PORT + '/api');
-      console.log('❤️  Health check: http://localhost:' + PORT + '/api/health');
+      if (process.env.FRONTEND_URL) console.log('🌐 Allowed frontend origin:', process.env.FRONTEND_URL);
+      console.log('❤️  Health: /api/health');
     });
   })
   .catch((err) => {
     console.error('❌ CRITICAL: Failed to connect to database');
     console.error('📝 Error details:', err.message);
-    console.error('💡 Please check:');
-    console.error('   1. MongoDB is running (local or cloud)');
-    console.error('   2. MONGO_URI is correctly set in .env file');
-    console.error('   3. Network/firewall settings allow connection');
     process.exit(1);
   });
 
