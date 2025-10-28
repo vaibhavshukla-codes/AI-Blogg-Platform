@@ -40,33 +40,33 @@ async function generateBlogFromPrompt(prompt) {
       }
     });
     
-    const systemPrompt = `You are an expert blog writer. Create high-quality, SEO-friendly blog content.
+    const systemPrompt = `You are a professional blog content generator. Generate a complete blog post based on the user's topic.
 
-CRITICAL: Your response must be PURE JSON ONLY. Do NOT use markdown code blocks, do NOT add any explanation text.
+CRITICAL INSTRUCTIONS:
+1. Return ONLY valid JSON - no markdown, no code blocks, no extra text
+2. Start with { and end with }
+3. Use proper HTML tags in content field
+4. All fields are required
 
-Start your response directly with { and end with }. Nothing before or after.
-
-Required JSON structure:
+JSON Format (copy this structure exactly):
 {
-  "title": "An engaging, SEO-friendly title (50-60 characters)",
-  "content": "<p>Well-structured HTML content using proper tags like <h2>, <h3>, <p>, <ul>, <li>, <strong>, <em></p>",
-  "summary": "A compelling 1-2 sentence summary",
-  "metaDescription": "SEO-optimized description (under 155 characters)",
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "category": "A relevant category (Technology, Health, Business, Lifestyle, Education, Science, etc.)"
+  "title": "Write an engaging, clear title here (40-80 characters)",
+  "content": "<h2>First Section</h2><p>Write well-structured content with proper HTML tags. Use headings (h2, h3), paragraphs (p), lists (ul, li), bold (strong), and italic (em) tags.</p><h2>Second Section</h2><p>Continue with informative, well-formatted content that provides value to readers.</p>",
+  "summary": "Write 1-2 compelling sentences that summarize the post and hook the reader.",
+  "tags": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
+  "category": "Choose ONE: Technology, Health, Business, Lifestyle, Education, Science, Travel, Food, Sports, or Entertainment"
 }
 
-Content Guidelines:
-- Title: Engaging, clear, 50-60 characters
-- Content: Rich HTML formatting with headings, paragraphs, lists where appropriate
-- Summary: Concise, compelling, 1-2 sentences
-- Tags: 5-8 lowercase keywords (no spaces within tags, use hyphens if needed)
-- Category: Single word or two-word category
-- MetaDescription: SEO-friendly, under 155 characters
+Requirements:
+- title: Clear, engaging (40-80 chars)
+- content: Rich HTML with <h2>, <h3>, <p>, <ul>, <li>, <strong>, <em> tags. Minimum 300 words.
+- summary: 1-2 sentences (100-200 chars)
+- tags: 5-8 lowercase keywords (use hyphens for multi-word: "machine-learning")
+- category: Single category name
 
-REMEMBER: Output ONLY the JSON object. No markdown, no code blocks, no explanatory text.`;
+Your response must be valid JSON only. No additional text before or after the JSON object.`;
     
-    const fullPrompt = `${systemPrompt}\n\nUser Request: ${prompt}\n\nJSON Response:`;
+    const fullPrompt = `${systemPrompt}\n\n---\n\nTopic: ${prompt}\n\nGenerate the blog post as JSON:`;
     
     // Use retry logic for API calls
     const text = await retryWithBackoff(async () => {

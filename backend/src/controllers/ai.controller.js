@@ -34,11 +34,16 @@ async function generate(req, res, next) {
         .replace(/```\s*/g, '')
         .trim();
       
-      // Remove any leading/trailing text before/after JSON
-      const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        cleanText = jsonMatch[0];
+      // Try to find JSON object in the response (more aggressive extraction)
+      // Look for the outermost { } pair that contains "title" field
+      const jsonStart = cleanText.indexOf('{');
+      const jsonEnd = cleanText.lastIndexOf('}');
+      
+      if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+        cleanText = cleanText.substring(jsonStart, jsonEnd + 1);
       }
+      
+      console.log('🔍 Attempting to parse cleaned text (first 300 chars):', cleanText.substring(0, 300));
       
       parsed = JSON.parse(cleanText);
       console.log('✅ Successfully parsed AI response');
@@ -94,47 +99,75 @@ async function generate(req, res, next) {
       
     } catch (parseError) {
       console.error('❌ JSON parsing failed:', parseError.message);
-      console.log('📝 Attempting fallback parsing...');
+      console.log('📄 Problematic text (first 500 chars):', text.substring(0, 500));
+      console.log('📝 Attempting aggressive fallback parsing...');
       
-      // Fallback: try to extract JSON from anywhere in the text
-      const jsonMatch = text.match(/\{[\s\S]*"title"[\s\S]*\}/);
-      if (jsonMatch) {
+      // Fallback 1: Try to find JSON with "title" field
+      const titleMatch = text.match(/\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*(?:\{[^}]*\}[^{}]*)*\}/);
+      if (titleMatch) {
         try {
-          parsed = JSON.parse(jsonMatch[0]);
-          console.log('✅ Fallback parsing successful');
+          parsed = JSON.parse(titleMatch[0]);
+          console.log('✅ Fallback parsing successful with title match');
           
-          // Apply same validations
+          // Apply validations
           if (!parsed.summary) {
-            const plainText = (parsed.content || text).replace(/<[^>]*>/g, '').trim();
+            const plainText = (parsed.content || '').replace(/<[^>]*>/g, '').trim();
             parsed.summary = plainText.substring(0, 150) + (plainText.length > 150 ? '...' : '');
           }
           if (!parsed.category) parsed.category = 'General';
-          if (!Array.isArray(parsed.tags)) parsed.tags = [];
+          if (!parsed.tags || !Array.isArray(parsed.tags)) parsed.tags = [];
+          if (!parsed.content) parsed.content = '<p>AI generation incomplete. Please try again.</p>';
           
-        } catch (_) {
-          console.error('❌ Fallback parsing also failed');
-          // Last resort: create a structured response from the raw text
-          const plainText = text.replace(/<[^>]*>/g, '').trim();
-          parsed = {
-            title: 'AI Generated Content',
-            content: text.includes('<') ? text : `<p>${text}</p>`,
-            summary: plainText.substring(0, 150) + (plainText.length > 150 ? '...' : ''),
-            tags: ['ai-generated'],
-            category: 'General'
-          };
-          console.log('⚠️ Using fallback structure with raw AI output');
+        } catch (fallbackError) {
+          console.error('❌ Fallback parsing failed:', fallbackError.message);
+          parsed = null;
         }
-      } else {
-        console.error('❌ Could not find JSON in response');
-        const plainText = text.replace(/<[^>]*>/g, '').trim();
-        parsed = {
-          title: 'AI Generated Content',
-          content: text.includes('<') ? text : `<p>${text}</p>`,
-          summary: plainText.substring(0, 150) + (plainText.length > 150 ? '...' : ''),
-          tags: ['ai-generated'],
-          category: 'General'
-        };
-        console.log('⚠️ Using fallback structure');
+      }
+      
+      // Fallback 2: Manual field extraction from text
+      if (!parsed) {
+        console.log('⚠️ Manual field extraction from AI response...');
+        
+        try {
+          // Try to extract fields manually
+          const titleMatch = text.match(/"title"\s*:\s*"([^"]*)"/);
+          const contentMatch = text.match(/"content"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          const summaryMatch = text.match(/"summary"\s*:\s*"([^"]*)"/);
+          const categoryMatch = text.match(/"category"\s*:\s*"([^"]*)"/);
+          const tagsMatch = text.match(/"tags"\s*:\s*\[(.*?)\]/);
+          
+          if (titleMatch || contentMatch) {
+            parsed = {
+              title: titleMatch ? titleMatch[1] : 'AI Generated Post',
+              content: contentMatch ? contentMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : '<p>Content generation incomplete.</p>',
+              summary: summaryMatch ? summaryMatch[1] : '',
+              category: categoryMatch ? categoryMatch[1] : 'General',
+              tags: tagsMatch ? tagsMatch[1].split(',').map(t => t.trim().replace(/"/g, '')) : []
+            };
+            
+            // Ensure content has HTML
+            if (!parsed.content.includes('<')) {
+              parsed.content = `<p>${parsed.content}</p>`;
+            }
+            
+            // Generate summary if missing
+            if (!parsed.summary) {
+              const plainText = parsed.content.replace(/<[^>]*>/g, '').trim();
+              parsed.summary = plainText.substring(0, 150) + (plainText.length > 150 ? '...' : '');
+            }
+            
+            console.log('✅ Manual extraction successful');
+          }
+        } catch (extractError) {
+          console.error('❌ Manual extraction failed:', extractError.message);
+        }
+      }
+      
+      // Fallback 3: Last resort - return error
+      if (!parsed) {
+        console.error('❌ All parsing attempts failed');
+        res.status(500);
+        throw new Error('AI generated invalid response. Please try again with a different prompt. The AI service is working, but the response format was unexpected.');
       }
     }
     
