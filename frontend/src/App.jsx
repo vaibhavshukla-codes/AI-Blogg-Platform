@@ -200,7 +200,7 @@ export default function App() {
           <AuthProvider>
             <div className="min-h-screen bg-gray-50">
               <Header />
-              <main className="max-w-7xl mx-auto px-4 py-4 md:py-6">
+              <main className="max-w-7xl mx-auto px-4 py-3 md:py-4">
                 <Routes>
                   <Route path="/" element={<Home />} />
                   <Route path="/login" element={<Login />} />

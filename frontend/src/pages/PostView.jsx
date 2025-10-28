@@ -6,6 +6,7 @@ import Comments from '../components/Comments'
 import SearchBar from '../components/SearchBar'
 import { useToast } from '../components/Toast'
 import { useConfirm } from '../components/ConfirmDialog'
+import DOMPurify from 'dompurify'
 
 export default function PostView() {
   const { slug } = useParams()
@@ -120,7 +121,7 @@ export default function PostView() {
   return (
     <div className="max-w-4xl mx-auto">
       <SearchBar />
-      <article className="bg-white rounded-lg shadow p-4 md:p-6 mb-4 md:mb-6">
+      <article className="bg-white rounded-lg shadow p-4 md:p-6 mb-4">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between mb-4 gap-3">
           <h1 className="text-2xl md:text-3xl font-bold flex-1">{post.title}</h1>
           
@@ -135,7 +136,7 @@ export default function PostView() {
               <button
                 onClick={handleEdit}
                 disabled={deleting}
-                className="px-3 md:px-4 py-1.5 md:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-1 md:gap-2 text-xs md:text-sm"
+                className="px-3 md:px-4 py-1.5 md:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-1 md:gap-2 text-xs md:text-sm font-medium"
                 title="Edit this post"
               >
                 ✏️ <span className="hidden sm:inline">Edit</span>
@@ -143,7 +144,7 @@ export default function PostView() {
               <button
                 onClick={handleDelete}
                 disabled={deleting}
-                className="px-3 md:px-4 py-1.5 md:py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-1 md:gap-2 text-xs md:text-sm"
+                className="px-3 md:px-4 py-1.5 md:py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-1 md:gap-2 text-xs md:text-sm font-medium"
                 title="Delete this post"
               >
                 {deleting ? '⏳' : '🗑️'} <span className="hidden sm:inline">{deleting ? 'Deleting...' : 'Delete'}</span>
@@ -162,23 +163,23 @@ export default function PostView() {
           <span>{post.views} views</span>
         </div>
         {post.coverImageUrl && (
-          <img src={post.coverImageUrl} alt={post.title} className="w-full h-48 md:h-64 object-cover rounded mb-4 md:mb-6" />
+          <img src={post.coverImageUrl} alt={post.title} className="w-full h-48 md:h-64 object-cover rounded mb-5" />
         )}
-        <div className="prose prose-sm md:prose max-w-none" dangerouslySetInnerHTML={{ __html: post.content }} />
+        <div className="prose prose-sm md:prose max-w-none mb-0 [&>*:last-child]:mb-0" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(post.content) }} />
         
         {user && (
-          <div className="flex flex-wrap gap-3 md:gap-4 mt-4 md:mt-6 pt-4 md:pt-6 border-t">
+          <div className="flex flex-wrap gap-3 mt-5 pt-5 border-t border-gray-200">
             <button 
               onClick={() => handleReaction('like')} 
               disabled={loading}
-              className={`px-3 md:px-4 py-2 rounded text-sm md:text-base ${liked ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${liked ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 hover:bg-gray-300'}`}
             >
               👍 {post.likes?.length || 0}
             </button>
             <button 
               onClick={() => handleReaction('dislike')} 
               disabled={loading}
-              className={`px-3 md:px-4 py-2 rounded text-sm md:text-base ${disliked ? 'bg-red-600 text-white' : 'bg-gray-200'}`}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${disliked ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-gray-200 hover:bg-gray-300'}`}
             >
               👎 {post.dislikes?.length || 0}
             </button>

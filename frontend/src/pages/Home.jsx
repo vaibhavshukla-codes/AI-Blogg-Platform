@@ -56,7 +56,7 @@ export default function Home() {
   }
 
   return (
-    <div className="space-y-4 md:space-y-6">
+    <div className="space-y-3 md:space-y-4">
       {/* Hero Section */}
       <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg p-6 md:p-8 text-center">
         <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold mb-3 md:mb-4">AI-Powered Blog Platform</h1>
@@ -152,16 +152,18 @@ export default function Home() {
             <Link 
               key={post.slug} 
               to={`/post/${post.slug}`} 
-              className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow group"
+              className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow group flex flex-col h-full overflow-hidden"
             >
               {post.coverImageUrl && (
-                <img 
-                  src={post.coverImageUrl} 
-                  alt={post.title}
-                  className="w-full h-40 md:h-48 object-cover rounded-t-lg group-hover:scale-105 transition-transform duration-200"
-                />
+                <div className="overflow-hidden rounded-t-lg">
+                  <img 
+                    src={post.coverImageUrl} 
+                    alt={post.title}
+                    className="w-full h-40 md:h-48 object-cover group-hover:scale-105 transition-transform duration-200"
+                  />
+                </div>
               )}
-              <div className="p-4 md:p-6">
+              <div className="p-4 md:p-6 flex-1 flex flex-col">
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(post.status)}`}>
                     {post.status}
@@ -177,24 +179,25 @@ export default function Home() {
                   {post.title}
                 </h3>
                 
-                <p className="text-gray-600 text-sm mb-4 line-clamp-3">
+                <p className="text-gray-600 text-sm line-clamp-3">
                   {post.summary || 'No summary available'}
                 </p>
                 
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs md:text-sm text-gray-500">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="truncate max-w-[120px] sm:max-w-none">By {post.author?.name}</span>
-                    <span className="hidden sm:inline">•</span>
-                    <span>{new Date(post.createdAt).toLocaleDateString()}</span>
+                <div className="space-y-1.5 mt-auto pt-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs md:text-sm text-gray-500">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="truncate max-w-[120px] sm:max-w-none">By {post.author?.name}</span>
+                      <span className="hidden sm:inline">•</span>
+                      <span>{new Date(post.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span>👁️ {post.views || 0}</span>
+                      <span>👍 {post.likes?.length || 0}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span>👁️ {post.views || 0}</span>
-                    <span>👍 {post.likes?.length || 0}</span>
-                  </div>
-                </div>
-                
-                {post.tags && post.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-3">
+                  
+                  {post.tags && post.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
                     {post.tags.slice(0, 3).map(tag => (
                       <span 
                         key={tag}
@@ -208,8 +211,9 @@ export default function Home() {
                         +{post.tags.length - 3} more
                       </span>
                     )}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
               </div>
             </Link>
           ))}

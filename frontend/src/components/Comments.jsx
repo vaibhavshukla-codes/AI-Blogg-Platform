@@ -16,6 +16,8 @@ export default function Comments({ postId }) {
   const [editContent, setEditContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [showReplies, setShowReplies] = useState({}) // Track which comments have replies visible
+  
+  const MAX_REPLY_DEPTH = 5 // Maximum nesting level for replies
 
   const loadComments = async () => {
     try {
@@ -177,7 +179,7 @@ export default function Comments({ postId }) {
     const isLiked = comment.likes?.some(id => id === user?.id) || false
     const isDisliked = comment.dislikes?.some(id => id === user?.id) || false
     const isAuthor = user && comment.author?._id === user.id
-    const canReply = user && !isAuthor // Others can reply, but not the author to their own comment
+    const canReply = user && !isAuthor && depth < MAX_REPLY_DEPTH // Limit reply depth
     
     // Count replies for this comment
     const replyCount = comment.replies?.length || 0

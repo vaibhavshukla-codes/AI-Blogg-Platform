@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
 import api from '../lib/api'
 
 const AuthCtx = createContext(null)
@@ -33,26 +33,26 @@ export function AuthProvider({ children }) {
     }
   }, [user])
 
-  const login = async (email, password) => {
+  const login = useCallback(async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password })
     setToken(data.token)
     setUser(data.user)
-  }
+  }, [])
 
-  const register = async (name, email, password) => {
+  const register = useCallback(async (name, email, password) => {
     const { data } = await api.post('/auth/register', { name, email, password })
     setToken(data.token)
     setUser(data.user)
-  }
+  }, [])
 
-  const logout = () => {
+  const logout = useCallback(() => {
     setToken(null)
     setUser(null)
     localStorage.removeItem('token')
     localStorage.removeItem('user')
-  }
+  }, [])
 
-  const value = useMemo(() => ({ token, user, login, register, logout }), [token, user])
+  const value = useMemo(() => ({ token, user, login, register, logout }), [token, user, login, register, logout])
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>
 }
 

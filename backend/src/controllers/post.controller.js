@@ -9,6 +9,7 @@ function estimateReadingTime(content) {
 async function createPost(req, res, next) {
   try {
     const { title, content, category, tags, coverImageUrl, summary, metaDescription, status } = req.body;
+    console.log('Creating post. Cover Image URL received:', coverImageUrl);
     if (!title || !content) {
       res.status(400);
       throw new Error('Title and content are required');
@@ -28,6 +29,7 @@ async function createPost(req, res, next) {
       author: req.user.id,
       status: status || 'draft',
     });
+    console.log('Post created with coverImageUrl:', post.coverImageUrl);
     
     // Populate author information before sending response
     await post.populate('author', 'name avatarUrl email');
@@ -83,6 +85,8 @@ async function updatePost(req, res, next) {
       throw new Error('Post not found');
     }
     req.post = existing;
+    console.log('Updating post. Cover Image URL received:', req.body.coverImageUrl);
+    console.log('Existing post coverImageUrl:', existing.coverImageUrl);
     const { title, content } = req.body;
     if (title) existing.title = title;
     if (content) {
@@ -92,8 +96,20 @@ async function updatePost(req, res, next) {
     ['category', 'tags', 'coverImageUrl', 'summary', 'metaDescription', 'status'].forEach((k) => {
       if (req.body[k] !== undefined) existing[k] = req.body[k];
     });
-    if (title) existing.slug = slugify(title, { lower: true, strict: true });
+    if (title) {
+      const newSlug = slugify(title, { lower: true, strict: true });
+      // Check if slug changed and if new slug is unique
+      if (newSlug !== existing.slug) {
+        const slugExists = await Post.findOne({ slug: newSlug });
+        if (slugExists) {
+          res.status(409);
+          throw new Error('A post with this title already exists');
+        }
+        existing.slug = newSlug;
+      }
+    }
     await existing.save();
+    console.log('Post updated with coverImageUrl:', existing.coverImageUrl);
     
     // Populate author information
     await existing.populate('author', 'name avatarUrl email');

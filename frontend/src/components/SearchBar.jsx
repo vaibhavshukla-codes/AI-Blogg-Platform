@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
@@ -7,6 +7,7 @@ export default function SearchBar() {
   const [results, setResults] = useState([])
   const [showResults, setShowResults] = useState(false)
   const navigate = useNavigate()
+  const searchRef = useRef(null)
 
   const searchPosts = async () => {
     try {
@@ -31,6 +32,31 @@ export default function SearchBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query])
 
+  // Close dropdown on click outside or ESC key
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (searchRef.current && !searchRef.current.contains(event.target)) {
+        setShowResults(false)
+      }
+    }
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setShowResults(false)
+        setQuery('')
+      }
+    }
+
+    if (showResults) {
+      document.addEventListener('mousedown', handleClickOutside)
+      document.addEventListener('keydown', handleEscape)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+        document.removeEventListener('keydown', handleEscape)
+      }
+    }
+  }, [showResults])
+
   const handleResultClick = (slug) => {
     navigate(`/post/${slug}`)
     setQuery('')
@@ -38,7 +64,7 @@ export default function SearchBar() {
   }
 
   return (
-    <div className="relative mb-4 md:mb-6">
+    <div className="relative mb-4 md:mb-6" ref={searchRef}>
       <div className="flex gap-2">
         <input
           type="text"
