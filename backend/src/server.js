@@ -37,21 +37,30 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // optional debug log: uncomment while troubleshooting
-    // console.log('CORS origin:', origin);
+    // Debug log for production troubleshooting
+    if (process.env.NODE_ENV === 'production') {
+      console.log('🔍 CORS Request from origin:', origin);
+      console.log('🔍 Allowed origins:', allowedOrigins);
+    }
 
     // allow non-browser requests (curl, server-to-server) that have no origin
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.includes(origin)) return callback(null, true);
 
-    // Optionally allow Vercel preview domains (uncomment to enable)
-    // if (origin.endsWith('.vercel.app')) return callback(null, true);
+    // Allow Vercel preview deployments (e.g., ai-blogg-platform-git-branch.vercel.app)
+    if (origin.endsWith('.vercel.app')) {
+      console.log('✅ Allowing Vercel preview deployment:', origin);
+      return callback(null, true);
+    }
 
+    console.error('❌ CORS blocked origin:', origin);
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 };
 
 app.use(cors(corsOptions));
