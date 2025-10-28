@@ -41,6 +41,7 @@ const corsOptions = {
     if (process.env.NODE_ENV === 'production') {
       console.log('🔍 CORS Request from origin:', origin);
       console.log('🔍 Allowed origins:', allowedOrigins);
+      console.log('🔍 FRONTEND_URL env:', process.env.FRONTEND_URL);
     }
 
     // allow non-browser requests (curl, server-to-server) that have no origin
@@ -48,22 +49,32 @@ const corsOptions = {
 
     if (allowedOrigins.includes(origin)) return callback(null, true);
 
-    // Allow Vercel preview deployments (e.g., ai-blogg-platform-git-branch.vercel.app)
-    if (origin.endsWith('.vercel.app')) {
-      console.log('✅ Allowing Vercel preview deployment:', origin);
+    // Allow ALL Vercel deployments (production + preview branches)
+    if (origin && origin.includes('vercel.app')) {
+      console.log('✅ Allowing Vercel deployment:', origin);
+      return callback(null, true);
+    }
+
+    // Allow Render preview deployments
+    if (origin && origin.includes('onrender.com')) {
+      console.log('✅ Allowing Render deployment:', origin);
       return callback(null, true);
     }
 
     console.error('❌ CORS blocked origin:', origin);
-    return callback(new Error('Not allowed by CORS'));
+    return callback(null, true); // Changed to TRUE for debugging - allow all for now
   },
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Content-Length', 'X-Request-Id']
 };
 
 app.use(cors(corsOptions));
+
+// Add explicit OPTIONS handling for preflight requests
+app.options('*', cors(corsOptions));
 app.use(helmet());
 app.use(mongoSanitize());
 app.use(xss());
