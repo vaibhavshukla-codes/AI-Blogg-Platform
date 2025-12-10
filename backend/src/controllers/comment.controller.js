@@ -146,7 +146,30 @@ async function moderate(req, res, next) {
   }
 }
 
-module.exports = { addComment, getComments, toggleReaction, updateComment, deleteComment, moderate };
+async function getAllComments(req, res, next) {
+  try {
+    const comments = await Comment.find()
+      .populate('author', 'name avatarUrl')
+      .populate('post', 'title')
+      .sort('-createdAt');
+
+    res.json({ comments });
+  } catch (err) {
+    next(err);
+  }
+}
+
+
+module.exports = { 
+  addComment, 
+  getComments, 
+  toggleReaction, 
+  updateComment, 
+  deleteComment, 
+  moderate,
+  getAllComments 
+};
+
 
 
 
