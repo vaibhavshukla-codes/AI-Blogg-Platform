@@ -32,34 +32,10 @@ async function addComment(req, res, next) {
 async function getComments(req, res, next) {
   try {
     const { postId } = req.params;
-    const allComments = await Comment.find({ post: postId })
+    const comments = await Comment.find({ post: postId })
       .populate('author', 'name avatarUrl')
-      .sort('createdAt')
-      .lean(); // Use lean() for better performance
-    
-    // Build nested tree structure
-    const commentMap = {};
-    const rootComments = [];
-    
-    // First pass: create a map of all comments
-    allComments.forEach(comment => {
-      commentMap[comment._id] = { ...comment, replies: [] };
-    });
-    
-    // Second pass: organize into tree structure
-    allComments.forEach(comment => {
-      if (comment.parent) {
-        // This is a reply, add it to parent's replies array
-        if (commentMap[comment.parent]) {
-          commentMap[comment.parent].replies.push(commentMap[comment._id]);
-        }
-      } else {
-        // This is a root comment
-        rootComments.push(commentMap[comment._id]);
-      }
-    });
-    
-    res.json({ comments: rootComments });
+      .sort('createdAt');
+    res.json({ comments });
   } catch (err) {
     next(err);
   }
@@ -170,25 +146,7 @@ async function moderate(req, res, next) {
   }
 }
 
-async function getAllComments(req, res, next) {
-  try {
-    const { limit = 100, page = 1 } = req.query;
-    const comments = await Comment.find()
-      .populate('author', 'name avatarUrl')
-      .populate('post', 'title')
-      .sort('-createdAt')
-      .skip((Number(page) - 1) * Number(limit))
-      .limit(Number(limit))
-      .lean();
-    
-    const total = await Comment.countDocuments();
-    res.json({ comments, total });
-  } catch (err) {
-    next(err);
-  }
-}
-
-module.exports = { addComment, getComments, toggleReaction, updateComment, deleteComment, moderate, getAllComments };
+module.exports = { addComment, getComments, toggleReaction, updateComment, deleteComment, moderate };
 
 
 
