@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import { getUserId, isSameUser } from '../lib/user'
 import Comments from '../components/Comments'
 import SearchBar from '../components/SearchBar'
 import { useToast } from '../components/Toast'
@@ -29,12 +30,13 @@ export default function PostView() {
         if (!isMounted) return
         
         setPost(data.post)
-        setLiked(data.post.likes?.some(id => id === user?.id) || false)
-        setDisliked(data.post.dislikes?.some(id => id === user?.id) || false)
+        const userId = getUserId(user)
+        setLiked(data.post.likes?.some((id) => String(id) === userId) || false)
+        setDisliked(data.post.dislikes?.some((id) => String(id) === userId) || false)
         
         // Track view with userId for unique view counting
-        if (user) {
-          api.post(`/posts/${slug}/views`, { userId: user.id }).catch(err => console.error('View tracking failed:', err))
+        if (userId) {
+          api.post(`/posts/${slug}/views`, { userId }).catch(err => console.error('View tracking failed:', err))
         } else {
           api.post(`/posts/${slug}/views`).catch(err => console.error('View tracking failed:', err))
         }
@@ -71,8 +73,9 @@ export default function PostView() {
       setPost(data.post)
       
       // Update local state based on server response
-      setLiked(data.post.likes?.some(id => id === user.id) || false)
-      setDisliked(data.post.dislikes?.some(id => id === user.id) || false)
+      const userId = getUserId(user)
+      setLiked(data.post.likes?.some((id) => String(id) === userId) || false)
+      setDisliked(data.post.dislikes?.some((id) => String(id) === userId) || false)
     } catch (e) {
       console.error('Reaction failed:', e)
       toast.showError('Failed to update reaction. Please try again.')
@@ -82,7 +85,7 @@ export default function PostView() {
   }
 
   const handleEdit = () => {
-    navigate('/editor', { state: { post } })
+    if (post?.slug) navigate(`/editor/${post.slug}`, { state: { post } })
   }
 
   const handleDelete = async () => {
@@ -112,7 +115,7 @@ export default function PostView() {
   }
 
   // Check if current user is the author
-  const isAuthor = user && post && post.author?._id === user.id
+  const isAuthor = user && post && isSameUser(user, post.author?._id || post.author)
   const isAdmin = user && user.role === 'admin'
   const canModify = isAuthor || isAdmin
 

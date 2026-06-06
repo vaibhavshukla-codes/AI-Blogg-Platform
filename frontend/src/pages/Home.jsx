@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 import SearchBar from '../components/SearchBar'
-import Notifications from '../components/Notifications'
 import { useToast } from '../components/Toast'
 
 export default function Home() {

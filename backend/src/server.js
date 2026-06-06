@@ -1,5 +1,5 @@
-// src/server.js
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
@@ -12,6 +12,7 @@ require('dotenv').config();
 
 const { connectDb } = require('./utils/db');
 const { notFound, errorHandler } = require('./utils/error');
+const { isAllowedOrigin } = require('./utils/cors');
 
 const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
@@ -28,41 +29,18 @@ const app = express();
 app.set('trust proxy', 1);
 
 // ----- CORS config (robust, production-ready) -----
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:3000',
-  process.env.FRONTEND_URL            // e.g. https://ai-blogg-platform.vercel.app
-].filter(Boolean);
-
 const corsOptions = {
   origin: function (origin, callback) {
     // Debug log for production troubleshooting
-    if (process.env.NODE_ENV === 'production') {
-      console.log('🔍 CORS Request from origin:', origin);
-      console.log('🔍 Allowed origins:', allowedOrigins);
-      console.log('🔍 FRONTEND_URL env:', process.env.FRONTEND_URL);
-    }
-
     // allow non-browser requests (curl, server-to-server) that have no origin
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-
-    // Allow ALL Vercel deployments (production + preview branches)
-    if (origin && origin.includes('vercel.app')) {
-      console.log('✅ Allowing Vercel deployment:', origin);
+    if (isAllowedOrigin(origin)) {
       return callback(null, true);
     }
 
-    // Allow Render preview deployments
-    if (origin && origin.includes('onrender.com')) {
-      console.log('✅ Allowing Render deployment:', origin);
-      return callback(null, true);
-    }
-
-    console.error('❌ CORS blocked origin:', origin);
-    return callback(null, true); // Changed to TRUE for debugging - allow all for now
+    console.error('CORS blocked origin:', origin);
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   optionsSuccessStatus: 200,
@@ -81,6 +59,7 @@ app.use(xss());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
@@ -134,33 +113,33 @@ app.use('/api/ai', aiRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
-// ----- Start server after DB connection -----
 const PORT = process.env.PORT || 5001;
 
-connectDb()
-  .then(async () => {
-    console.log('✅ Database connection established');
+async function startServer() {
+  try {
+    await connectDb();
 
-    try {
-      const collections = await mongoose.connection.db.listCollections().toArray();
-      console.log('📚 Available collections:', collections.map(c => c.name).join(', ') || 'None');
-    } catch (e) {
-      console.error('⚠️  Could not list collections:', e.message);
-    }
-
-    app.listen(PORT, () => {
-      console.log('🚀 Server running on port', PORT);
-      if (process.env.FRONTEND_URL) console.log('🌐 Allowed frontend origin:', process.env.FRONTEND_URL);
-      console.log('❤️  Health: /api/health');
+    const server = app.listen(PORT, () => {
+      console.log(`Server listening on port ${PORT}`);
     });
-  })
-  .catch((err) => {
-    console.error('❌ CRITICAL: Failed to connect to database');
-    console.error('📝 Error details:', err.message);
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`Port ${PORT} is already in use`);
+        process.exit(1);
+      }
+      throw err;
+    });
+  } catch (err) {
+    console.error('Failed to connect to database:', err.message);
     process.exit(1);
-  });
+  }
+}
+
+if (require.main === module) {
+  startServer();
+}
 
 module.exports = app;
-
-
-
+module.exports.app = app;
+module.exports.startServer = startServer;

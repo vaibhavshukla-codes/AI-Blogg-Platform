@@ -21,6 +21,16 @@ export default function Dashboard() {
       // Fetch user's posts
       const postsRes = await api.get('/users/me/posts')
       const userPosts = postsRes.data.posts
+      const commentCounts = await Promise.all(
+        userPosts.map(async (post) => {
+          try {
+            const { data } = await api.get(`/comments/${post._id}`)
+            return data.comments?.length || 0
+          } catch {
+            return 0
+          }
+        })
+      )
       
       setPosts(userPosts)
       setRecentPosts(userPosts)
@@ -28,7 +38,7 @@ export default function Dashboard() {
       // Calculate stats from user's posts
       const totalViews = userPosts.reduce((sum, post) => sum + (post.views || 0), 0)
       const totalLikes = userPosts.reduce((sum, post) => sum + (post.likes?.length || 0), 0)
-      const totalComments = userPosts.reduce((sum, post) => sum + (post.comments?.length || 0), 0)
+      const totalComments = commentCounts.reduce((sum, count) => sum + count, 0)
       
       setStats({ totalViews, totalLikes, totalComments })
     } catch (e) {
@@ -53,7 +63,7 @@ export default function Dashboard() {
   }
 
   const handleEdit = (post) => {
-    navigate('/editor', { state: { post } })
+    navigate(`/editor/${post.slug}`, { state: { post } })
   }
 
   const handleDelete = async (post) => {
@@ -224,5 +234,4 @@ export default function Dashboard() {
     </div>
   )
 }
-
 

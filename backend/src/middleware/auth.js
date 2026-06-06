@@ -1,6 +1,31 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+function optionalProtect(req, res, next) {
+  const authHeader = req.headers.authorization || req.cookies?.token;
+  let token;
+  if (authHeader && authHeader.startsWith && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (typeof authHeader === 'string') {
+    token = authHeader;
+  }
+  if (!token || !process.env.JWT_SECRET) {
+    return next();
+  }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = {
+      id: decoded.id,
+      role: decoded.role,
+      name: decoded.name,
+      email: decoded.email,
+    };
+  } catch {
+    // Invalid token on public routes — treat as anonymous
+  }
+  return next();
+}
+
 function protect(req, res, next) {
   const authHeader = req.headers.authorization || req.cookies?.token;
   let token;
@@ -16,7 +41,7 @@ function protect(req, res, next) {
   
   // Check if JWT_SECRET is configured
   if (!process.env.JWT_SECRET) {
-    console.error('CRITICAL: JWT_SECRET is not configured in environment variables');
+    console.error('JWT_SECRET is not configured');
     res.status(500);
     return next(new Error('Server configuration error'));
   }
@@ -66,7 +91,7 @@ async function canModifyPost(req, res, next) {
   return next(new Error('Forbidden'));
 }
 
-module.exports = { protect, authorize, canModifyPost };
+module.exports = { protect, optionalProtect, authorize, canModifyPost };
 
 
 

@@ -1,16 +1,43 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useParams } from 'react-router-dom'
 import ReactQuill from 'react-quill'
 import 'react-quill/dist/quill.snow.css'
 import api from '../lib/api'
+import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import DOMPurify from 'dompurify'
+
+function getPlainTextFromEditorHtml(html) {
+  if (!html || !html.trim()) return ''
+
+  const trimmed = html.trim()
+  if (/^<p>(?:<br\s*\/?>|\s)*<\/p>$/i.test(trimmed)) return ''
+
+  const div = document.createElement('div')
+  div.innerHTML = DOMPurify.sanitize(html)
+  return (div.textContent || div.innerText || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function applyPostToForm(post, setters) {
+  setters.setTitle(post.title || '')
+  setters.setContent(post.content || '')
+  setters.setSummary(post.summary || '')
+  setters.setCategory(post.category || '')
+  setters.setTags(post.tags?.join(', ') || '')
+  setters.setCoverImageUrl(post.coverImageUrl || '')
+}
 
 export default function PostEditor() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { slug: slugParam } = useParams()
   const toast = useToast()
-  const editingPost = location.state?.post // Get post data if editing
+  const { token } = useAuth()
+  const [editingPost, setEditingPost] = useState(location.state?.post || null)
+  const [loadingPost, setLoadingPost] = useState(false)
   
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
@@ -20,6 +47,7 @@ export default function PostEditor() {
   const [cover, setCover] = useState(null)
   const [coverImageUrl, setCoverImageUrl] = useState('')
   const [coverPreview, setCoverPreview] = useState('')
+  const [uploadingCover, setUploadingCover] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
   const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState({})
@@ -28,21 +56,49 @@ export default function PostEditor() {
   const [autoSaveStatus, setAutoSaveStatus] = useState('')
   const [lastSaved, setLastSaved] = useState(null)
   
-  // Load existing post data if editing
+  // Load post from navigation state or URL slug (survives page refresh)
   useEffect(() => {
-    if (editingPost) {
-      setTitle(editingPost.title || '')
-      setContent(editingPost.content || '')
-      setSummary(editingPost.summary || '')
-      setCategory(editingPost.category || '')
-      setTags(editingPost.tags?.join(', ') || '')
-      setCoverImageUrl(editingPost.coverImageUrl || '')
+    const postFromState = location.state?.post
+    if (postFromState) {
+      setEditingPost(postFromState)
+      applyPostToForm(postFromState, {
+        setTitle, setContent, setSummary, setCategory, setTags, setCoverImageUrl,
+      })
+      return
     }
-  }, [editingPost])
+
+    if (!slugParam) {
+      setEditingPost(null)
+      return
+    }
+
+    let cancelled = false
+    const loadPost = async () => {
+      setLoadingPost(true)
+      try {
+        const { data } = await api.get(`/posts/${slugParam}`)
+        if (cancelled) return
+        setEditingPost(data.post)
+        applyPostToForm(data.post, {
+          setTitle, setContent, setSummary, setCategory, setTags, setCoverImageUrl,
+        })
+      } catch (e) {
+        if (!cancelled) {
+          toast.showError(e.response?.data?.message || 'Failed to load post for editing')
+          navigate('/dashboard')
+        }
+      } finally {
+        if (!cancelled) setLoadingPost(false)
+      }
+    }
+
+    loadPost()
+    return () => { cancelled = true }
+  }, [slugParam, location.state?.post, navigate, toast])
 
   // Calculate reading time and word count
   const contentStats = useMemo(() => {
-    const plainText = content.replace(/<[^>]*>/g, '').trim()
+    const plainText = getPlainTextFromEditorHtml(content)
     const words = plainText.split(/\s+/).filter(Boolean).length
     const characters = plainText.length
     const readingTime = Math.max(1, Math.ceil(words / 200)) // 200 words per minute
@@ -72,13 +128,18 @@ export default function PostEditor() {
   const loadDraft = useCallback(() => {
     const savedDraft = localStorage.getItem('blog_draft')
     if (savedDraft) {
-      const draft = JSON.parse(savedDraft)
-      setTitle(draft.title || '')
-      setContent(draft.content || '')
-      setSummary(draft.summary || '')
-      setCategory(draft.category || '')
-      setTags(draft.tags || '')
-      toast.showSuccess('Draft loaded successfully!')
+      try {
+        const draft = JSON.parse(savedDraft)
+        setTitle(draft.title || '')
+        setContent(draft.content || '')
+        setSummary(draft.summary || '')
+        setCategory(draft.category || '')
+        setTags(draft.tags || '')
+        toast.showSuccess('Draft loaded successfully!')
+      } catch {
+        localStorage.removeItem('blog_draft')
+        toast.showError('Saved draft was invalid and has been cleared.')
+      }
     }
   }, [toast])
 
@@ -107,7 +168,7 @@ export default function PostEditor() {
   const generateSummary = useCallback(() => {
     if (summary) return // Don't overwrite existing summary
     
-    const plainText = content.replace(/<[^>]*>/g, '').trim()
+    const plainText = getPlainTextFromEditorHtml(content)
     const sentences = plainText.split(/[.!?]+/).filter(Boolean)
     const firstSentences = sentences.slice(0, 2).join('. ')
     const autoSummary = firstSentences.length > 150 
@@ -157,21 +218,55 @@ export default function PostEditor() {
     }
   }, [cover])
 
+  const uploadCoverFile = async (file) => {
+    if (!file.type?.startsWith('image/')) {
+      throw new Error('Please select an image file for the cover.')
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      throw new Error('Cover image must be 5 MB or smaller.')
+    }
+
+    const fd = new FormData()
+    fd.append('file', file)
+    const { data } = await api.post('/upload/image', fd)
+    return data.url
+  }
+
+  const handleCoverSelect = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setCover(file)
+    setUploadingCover(true)
+    try {
+      const url = await uploadCoverFile(file)
+      setCoverImageUrl(url)
+      setCover(null)
+      setCoverPreview('')
+      toast.showSuccess('Cover image uploaded!')
+    } catch (error) {
+      setCover(null)
+      setCoverPreview('')
+      setCoverImageUrl('')
+      toast.showError(error.response?.data?.message || error.message || 'Failed to upload cover image')
+    } finally {
+      setUploadingCover(false)
+      e.target.value = ''
+    }
+  }
+
   const onUpload = async () => {
     if (!cover) {
-      console.log('No cover file to upload')
-      return null
+      return coverImageUrl || null
     }
+
     try {
-      console.log('Uploading cover image:', cover.name)
-      const fd = new FormData()
-      fd.append('file', cover)
-      const { data } = await api.post('/upload/image', fd)
-      console.log('Upload successful! URL:', data.url)
-      return data.url
+      const url = await uploadCoverFile(cover)
+      setCoverImageUrl(url)
+      setCover(null)
+      setCoverPreview('')
+      return url
     } catch (error) {
-      console.error('Upload error:', error)
-      console.error('Error response:', error.response?.data)
       throw new Error('Failed to upload image: ' + (error.response?.data?.message || error.message))
     }
   }
@@ -195,141 +290,90 @@ export default function PostEditor() {
       return
     }
     
+    if (!token) {
+      toast.showWarning('Your session expired. Please log in again to use AI generation.')
+      navigate('/login')
+      return
+    }
+
     setLoading(true)
     setErrors({})
     
     try {
-      console.log('📤 Sending AI generation request...')
-      console.log('📝 Prompt:', trimmedPrompt.substring(0, 100) + (trimmedPrompt.length > 100 ? '...' : ''))
-      
-      const { data } = await api.post('/ai/generate', { prompt: trimmedPrompt })
-      console.log('📥 Received AI response:', data)
-      
+      const { data } = await api.post(
+        '/ai/generate',
+        { prompt: trimmedPrompt },
+        { timeout: 120000 }
+      )
+
       const r = data.result || {}
-      
-      // Comprehensive validation of AI response
-      console.log('🔍 Validating AI response fields:', {
-        hasTitle: !!r.title,
-        hasContent: !!r.content,
-        hasSummary: !!r.summary,
-        hasCategory: !!r.category,
-        hasTags: Array.isArray(r.tags) && r.tags.length > 0
-      })
-      
-      // Ensure minimum required fields
+
       if (!r.title && !r.content) {
         throw new Error('AI response is incomplete. Please try again with a different prompt.')
       }
-      
-      // Track what was generated
+
       const generatedFields = []
-      
-      // Set generated content with validation
-      if (r.title && r.title.trim()) {
-        console.log('✅ Setting title:', r.title)
+
+      if (r.title?.trim()) {
         setTitle(r.title.trim())
         generatedFields.push('Title')
-      } else {
-        console.warn('⚠️ Title is missing or empty')
       }
-      
-      if (r.content && r.content.trim()) {
-        console.log('✅ Setting content (length:', r.content.length, 'chars)')
+
+      if (r.content?.trim()) {
         setContent(r.content)
         generatedFields.push('Content')
-      } else {
-        console.warn('⚠️ Content is missing or empty')
       }
-      
-      if (r.summary && r.summary.trim()) {
-        console.log('✅ Setting summary:', r.summary.substring(0, 100) + '...')
+
+      if (r.summary?.trim()) {
         setSummary(r.summary.trim())
         generatedFields.push('Summary')
-      } else {
-        console.warn('⚠️ Summary is missing - will need to be added manually')
       }
-      
-      if (r.category && r.category.trim()) {
-        console.log('✅ Setting category:', r.category)
+
+      if (r.category?.trim()) {
         setCategory(r.category.trim())
         generatedFields.push('Category')
       } else {
-        console.warn('⚠️ Category is missing - defaulting to General')
         setCategory('General')
       }
-      
-      // Handle tags - ensure it's properly formatted
+
       if (r.tags) {
         let tagString = ''
-        
         if (Array.isArray(r.tags) && r.tags.length > 0) {
-          // Filter out empty tags and join
-          const validTags = r.tags.filter(t => t && String(t).trim())
+          const validTags = r.tags.filter((t) => t && String(t).trim())
           if (validTags.length > 0) {
-            tagString = validTags.map(t => String(t).trim()).join(', ')
+            tagString = validTags.map((t) => String(t).trim()).join(', ')
           }
         } else if (typeof r.tags === 'string' && r.tags.trim()) {
           tagString = r.tags.trim()
         }
-        
         if (tagString) {
-          console.log('✅ Setting tags:', tagString)
           setTags(tagString)
           generatedFields.push('Tags')
-        } else {
-          console.warn('⚠️ Tags are empty or invalid')
         }
-      } else {
-        console.warn('⚠️ No tags provided in AI response')
       }
-      
-      // Handle metaDescription if provided (optional field for SEO)
-      if (r.metaDescription) {
-        console.log('✅ Meta description received:', r.metaDescription.substring(0, 100))
-        // You can add a metaDescription field to your form if needed
-      }
-      
-      // Clear the prompt after successful generation
+
       setAiPrompt('')
-      
-      // Show detailed success message with what was generated
-      const fieldsGenerated = generatedFields.length > 0 
-        ? `✅ ${generatedFields.join('\n✅ ')}` 
+
+      const fieldsGenerated = generatedFields.length > 0
+        ? `✅ ${generatedFields.join('\n✅ ')}`
         : 'Content generated'
-      
+
       const missingFields = []
-      if (!r.title || !r.title.trim()) missingFields.push('Title')
-      if (!r.content || !r.content.trim()) missingFields.push('Content')  
-      if (!r.summary || !r.summary.trim()) missingFields.push('Summary')
-      if (!r.category || !r.category.trim()) missingFields.push('Category')
+      if (!r.title?.trim()) missingFields.push('Title')
+      if (!r.content?.trim()) missingFields.push('Content')
+      if (!r.summary?.trim()) missingFields.push('Summary')
+      if (!r.category?.trim()) missingFields.push('Category')
       if (!r.tags || (Array.isArray(r.tags) && r.tags.length === 0)) missingFields.push('Tags')
-      
-      const missingInfo = missingFields.length > 0 
-        ? `\n\n⚠️ Please manually add: ${missingFields.join(', ')}` 
+
+      const missingInfo = missingFields.length > 0
+        ? `\n\n⚠️ Please manually add: ${missingFields.join(', ')}`
         : ''
-      
+
       toast.showSuccess(
-        `✨ AI Generation Successful!\n\n${fieldsGenerated}${missingInfo}\n\nReview and edit before publishing.`, 
+        `✨ AI Generation Successful!\n\n${fieldsGenerated}${missingInfo}\n\nReview and edit before publishing.`,
         6000
       )
-      
-      console.log('✅ AI generation complete:', {
-        fieldsGenerated: generatedFields,
-        missingFields: missingFields,
-        titleLength: r.title?.length || 0,
-        contentLength: r.content?.length || 0,
-        summaryLength: r.summary?.length || 0,
-        categorySet: !!r.category,
-        tagsCount: Array.isArray(r.tags) ? r.tags.length : 0
-      })
-      
     } catch (e) {
-      console.error('❌ AI generation error:', e)
-      console.error('Error details:', {
-        message: e.message,
-        response: e.response?.data,
-        status: e.response?.status
-      })
       
       let errorMsg = 'AI generation failed'
       let errorTitle = '❌ AI Generation Failed'
@@ -344,8 +388,11 @@ export default function PostEditor() {
         errorMsg = backendMsg || 'Invalid prompt. Please provide more details and try again.'
       } else if (e.response?.status === 401) {
         errorMsg = 'Your session has expired. Please log in again.'
-      } else if (e.response?.status === 500) {
-        errorMsg = backendMsg || 'Server error occurred. Please try again or write manually.'
+      } else if (e.response?.status === 500 || e.response?.status === 502 || e.response?.status === 503) {
+        errorMsg = backendMsg || 'AI service error. Please try again or write manually.'
+      } else if (e.code === 'ECONNABORTED') {
+        errorTitle = '⏰ Request Timed Out'
+        errorMsg = 'AI generation took too long. Please try again with a shorter prompt.'
       } else if (backendMsg.includes('quota') || backendMsg.includes('RESOURCE_EXHAUSTED')) {
         errorTitle = '⚠️ API Quota Exceeded'
         errorMsg = 'The AI service quota has been exceeded. Please try again later or write your post manually.'
@@ -369,27 +416,26 @@ export default function PostEditor() {
 
   const validateForm = () => {
     const newErrors = {}
-    if (!title.trim()) {
+    const trimmedTitle = title.trim()
+
+    if (!trimmedTitle) {
       newErrors.title = 'Title is required'
-    } else if (title.trim().length < 3) {
-      newErrors.title = 'Title must be at least 3 characters'
-    } else if (title.trim().length > 200) {
+    } else if (trimmedTitle.length > 200) {
       newErrors.title = 'Title must not exceed 200 characters'
     }
-    
-    const plainText = content.replace(/<[^>]*>/g, '').trim()
+
+    const plainText = getPlainTextFromEditorHtml(content)
     if (!plainText) {
-      newErrors.content = 'Content is required'
-    } else if (plainText.length < 50) {
-      newErrors.content = 'Content must be at least 50 characters'
+      newErrors.content = 'Content is required — add some text in the editor'
     }
-    
-    if (summary && summary.length > 500) {
+
+    const trimmedSummary = summary.trim()
+    if (trimmedSummary.length > 500) {
       newErrors.summary = 'Summary must not exceed 500 characters'
     }
-    
+
     setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
+    return newErrors
   }
 
   const onSaveDraft = async () => {
@@ -400,28 +446,19 @@ export default function PostEditor() {
 
     setLoading(true)
     try {
-      console.log('Saving draft. Cover file selected:', !!cover, cover?.name)
       const newCoverUrl = cover ? await onUpload() : null
-      console.log('New cover URL after upload:', newCoverUrl)
-      console.log('Existing cover image URL:', coverImageUrl)
-      
-      // Determine final cover URL: prioritize new upload, then existing URL
       const finalCoverUrl = newCoverUrl || coverImageUrl || null
-      
-      console.log('Final cover URL to be sent:', finalCoverUrl)
-      
-      const body = { 
-        title: title.trim() || 'Untitled Draft', 
-        content: content.trim() || '<p>Draft content</p>', 
-        summary: summary.trim() || undefined, 
-        category: category.trim() || undefined, 
-        tags: tags.split(',').map(t => t.trim()).filter(Boolean), 
-        coverImageUrl: finalCoverUrl, 
+
+      const body = {
+        title: title.trim() || 'Untitled Draft',
+        content: content.trim() || '<p>Draft content</p>',
+        summary: summary.trim() || undefined,
+        category: category.trim() || undefined,
+        tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+        coverImageUrl: finalCoverUrl,
         status: 'draft'
       }
-      
-      console.log('Request body:', body)
-      
+
       if (editingPost) {
         await api.put(`/posts/${editingPost.slug}`, body)
         toast.showSuccess('Draft updated successfully!')
@@ -442,43 +479,40 @@ export default function PostEditor() {
   }
 
   const onPublish = async () => {
-    if (!validateForm()) {
-      toast.showWarning('Please fix the form errors before publishing')
+    const validationErrors = validateForm()
+    if (Object.keys(validationErrors).length > 0) {
+      if (showPreview) setShowPreview(false)
+      const firstMessage = Object.values(validationErrors)[0]
+      toast.showWarning(firstMessage)
+      requestAnimationFrame(() => {
+        const fieldOrder = ['title', 'content', 'summary']
+        const firstField = fieldOrder.find((field) => validationErrors[field])
+        const elementId = firstField === 'content' ? 'post-content' : `post-${firstField}`
+        document.getElementById(elementId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
       return
     }
 
     setLoading(true)
     try {
-      // Only upload cover if a new file was selected
-      console.log('Publishing post. Cover file selected:', !!cover, cover?.name)
       const newCoverUrl = cover ? await onUpload() : null
-      console.log('New cover URL after upload:', newCoverUrl)
-      console.log('Existing cover image URL:', coverImageUrl)
-      
-      // Determine final cover URL: prioritize new upload, then existing URL
       const finalCoverUrl = newCoverUrl || coverImageUrl || null
-      
-      console.log('Final cover URL to be sent:', finalCoverUrl)
-      
-      const body = { 
-        title: title.trim(), 
-        content: content.trim(), 
-        summary: summary.trim() || undefined, 
-        category: category.trim() || undefined, 
-        tags: tags.split(',').map(t => t.trim()).filter(Boolean), 
-        coverImageUrl: finalCoverUrl, 
+
+      const body = {
+        title: title.trim(),
+        content: content.trim(),
+        summary: summary.trim() || undefined,
+        category: category.trim() || undefined,
+        tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+        coverImageUrl: finalCoverUrl,
         status: 'published'
       }
-      
-      console.log('Request body:', body)
-      
+
       let response
       if (editingPost) {
-        // Update existing post
         response = await api.put(`/posts/${editingPost.slug}`, body)
         toast.showSuccess('Post updated successfully! Redirecting...')
       } else {
-        // Create new post
         response = await api.post('/posts', body)
         toast.showSuccess('Post published successfully! Redirecting...')
       }
@@ -501,7 +535,6 @@ export default function PostEditor() {
     } finally { setLoading(false) }
   }
 
-  // Enhanced Rich Text Editor Modules
   const quillModules = useMemo(() => ({
     toolbar: [
       [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
@@ -591,7 +624,7 @@ export default function PostEditor() {
         {!showPreview ? (
           <>
             {/* Title Input */}
-            <div>
+            <div id="post-title">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-semibold text-gray-700">
                   Title <span className="text-red-500">*</span>
@@ -613,7 +646,7 @@ export default function PostEditor() {
             </div>
             
             {/* Rich Text Editor */}
-            <div>
+            <div id="post-content">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm font-semibold text-gray-700">
                   Content <span className="text-red-500">*</span>
@@ -684,7 +717,7 @@ export default function PostEditor() {
           <h3 className="text-lg md:text-xl font-bold text-gray-900 border-b-2 border-gray-200 pb-3">📋 Post Metadata</h3>
           
           {/* Summary */}
-          <div>
+          <div id="post-summary">
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-semibold text-gray-700">Summary</label>
               <div className="flex items-center gap-2">
@@ -788,7 +821,7 @@ export default function PostEditor() {
                   </svg>
                 </button>
                 <p className="text-xs text-gray-500 mt-2 font-medium">
-                  {coverPreview ? '📸 New cover image selected' : '🖼️ Current cover image'}
+                  {uploadingCover ? '⏳ Uploading to Cloudinary...' : coverPreview ? '📸 Uploading preview...' : '✅ Cover image ready'}
                 </p>
               </div>
             )}
@@ -798,7 +831,8 @@ export default function PostEditor() {
               <input 
                 type="file" 
                 accept="image/*"
-                onChange={e => setCover(e.target.files?.[0])} 
+                onChange={handleCoverSelect}
+                disabled={uploadingCover}
                 className="block w-full text-sm text-gray-500 
                   file:mr-4 file:py-3 file:px-6
                   file:rounded-lg file:border-0
@@ -812,17 +846,8 @@ export default function PostEditor() {
               />
             </div>
             
-            {cover && (
-              <div className="mt-2 flex items-center gap-2 text-sm font-medium">
-                <span className="text-green-600">✓ Selected: {cover.name}</span>
-                <span className="text-gray-500">({(cover.size / 1024).toFixed(1)} KB)</span>
-              </div>
-            )}
-            
-            {coverImageUrl && cover && (
-              <p className="text-xs text-orange-600 mt-2 font-medium">
-                ⚠️ This will replace your current cover image
-              </p>
+            {uploadingCover && (
+              <p className="mt-2 text-sm text-blue-600 font-medium">⏳ Uploading cover image...</p>
             )}
           </div>
 
@@ -1013,5 +1038,4 @@ export default function PostEditor() {
     </div>
   )
 }
-
 

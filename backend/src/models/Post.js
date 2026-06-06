@@ -28,21 +28,16 @@ postSchema.pre('deleteOne', { document: true, query: false }, async function(nex
     const Comment = mongoose.model('Comment');
     const Notification = mongoose.model('Notification');
     
-    console.log(`🗑️  Cascading delete for post: ${this.slug}`);
-    
-    // Delete all comments associated with this post
-    const deletedComments = await Comment.deleteMany({ post: this._id });
-    console.log(`   ✓ Deleted ${deletedComments.deletedCount} comments`);
-    
-    // Delete all notifications associated with this post
-    const deletedNotifications = await Notification.deleteMany({ 
-      'meta.postId': this._id.toString() 
-    });
-    console.log(`   ✓ Deleted ${deletedNotifications.deletedCount} notifications`);
-    
+    const comments = await Comment.find({ post: this._id });
+    for (const comment of comments) {
+      await comment.deleteOne();
+    }
+
+    await Notification.deleteMany({ 'meta.postId': this._id.toString() });
+
     next();
   } catch (error) {
-    console.error('❌ Error in post cascade delete:', error);
+    console.error('Post cascade delete error:', error);
     next(error);
   }
 });
@@ -55,25 +50,21 @@ postSchema.pre('findOneAndDelete', async function(next) {
     const doc = await this.model.findOne(this.getFilter());
     
     if (doc) {
-      console.log(`🗑️  Cascading delete for post: ${doc.slug}`);
-      
-      const deletedComments = await Comment.deleteMany({ post: doc._id });
-      console.log(`   ✓ Deleted ${deletedComments.deletedCount} comments`);
-      
-      const deletedNotifications = await Notification.deleteMany({ 
-        'meta.postId': doc._id.toString() 
-      });
-      console.log(`   ✓ Deleted ${deletedNotifications.deletedCount} notifications`);
+      const comments = await Comment.find({ post: doc._id });
+      for (const comment of comments) {
+        await comment.deleteOne();
+      }
+
+      await Notification.deleteMany({ 'meta.postId': doc._id.toString() });
     }
-    
+
     next();
   } catch (error) {
-    console.error('❌ Error in post cascade delete:', error);
+    console.error('Post cascade delete error:', error);
     next(error);
   }
 });
 
 module.exports = mongoose.model('Post', postSchema);
-
 
 

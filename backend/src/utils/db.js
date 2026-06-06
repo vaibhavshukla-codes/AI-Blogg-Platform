@@ -1,72 +1,69 @@
 const mongoose = require('mongoose');
 
-async function connectDb() {
-  const mongoUri = process.env.MONGO_URI;
-  
-  if (!mongoUri) {
-    console.error('❌ CRITICAL: MONGO_URI environment variable is not set!');
+let listenersAttached = false;
+let connectionPromise = null;
+
+function validateMongoUri(uri) {
+  if (!uri) {
     throw new Error('MONGO_URI not set in environment variables');
   }
 
-  console.log('🔌 Attempting to connect to MongoDB...');
-  console.log('📍 URI:', mongoUri.replace(/:[^:@]+@/, ':****@')); // Hide password in logs
-  
-  mongoose.set('strictQuery', true);
-  
-  // Add connection event listeners
-  mongoose.connection.on('connected', () => {
-    console.log('✅ MongoDB connected successfully');
-    console.log('📊 Database:', mongoose.connection.name);
-  });
+  if (uri.includes('<username>') || uri.includes('<password>') || uri.includes('<cluster>')) {
+    throw new Error('MONGO_URI still contains placeholder values');
+  }
+
+  if (!uri.startsWith('mongodb://') && !uri.startsWith('mongodb+srv://')) {
+    throw new Error('MONGO_URI must start with mongodb:// or mongodb+srv://');
+  }
+}
+
+function attachConnectionListeners() {
+  if (listenersAttached) return;
+  listenersAttached = true;
 
   mongoose.connection.on('error', (err) => {
-    console.error('❌ MongoDB connection error:', err);
+    console.error('MongoDB connection error:', err.message);
   });
+}
 
-  mongoose.connection.on('disconnected', () => {
-    console.log('⚠️  MongoDB disconnected');
-  });
+async function connectDb() {
+  const mongoUri = process.env.MONGO_URI?.trim();
 
-  try {
+  validateMongoUri(mongoUri);
+
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+
+  if (connectionPromise) {
+    return connectionPromise;
+  }
+
+  mongoose.set('strictQuery', true);
+  attachConnectionListeners();
+
+  connectionPromise = (async () => {
     await mongoose.connect(mongoUri, {
       serverSelectionTimeoutMS: 15000,
       socketTimeoutMS: 45000,
+      maxPoolSize: 10,
+      retryWrites: true,
     });
-    
-    // Test the connection
+
     await mongoose.connection.db.admin().ping();
-    console.log('🏓 Database ping successful');
-    
-    // List all collections
-    const collections = await mongoose.connection.db.listCollections().toArray();
-    const collectionNames = collections.map(c => c.name).join(', ');
-    if (collectionNames) {
-      console.log('📚 Available collections:', collectionNames);
-    } else {
-      console.log('📚 No collections yet (will be created on first insert)');
-    }
-    
-    // Show database connection info
-    const isAtlas = mongoUri.includes('mongodb+srv://') || mongoUri.includes('mongodb.net');
-    if (isAtlas) {
-      console.log('☁️  Connected to MongoDB Atlas (Cloud)');
-    } else {
-      console.log('💻 Connected to MongoDB (Local)');
-    }
-    
-    console.log('✅ Database connection established');
-    
+    const isLocal = mongoUri.includes('127.0.0.1') || mongoUri.includes('localhost');
+    console.log(`MongoDB connected (${isLocal ? 'local' : 'remote'}) — database: ${mongoose.connection.name}`);
+
     return mongoose.connection;
+  })();
+
+  try {
+    return await connectionPromise;
   } catch (error) {
-    console.error('❌ Failed to connect to MongoDB:', error.message);
-    console.error('📝 Full error:', error);
-    console.error('\n⚠️  Make sure your MONGO_URI is correct in .env file');
-    console.error('   Format: mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<database>?retryWrites=true&w=majority');
+    connectionPromise = null;
+    console.error('Failed to connect to MongoDB:', error.message);
     throw error;
   }
 }
 
 module.exports = { connectDb };
-
-
-

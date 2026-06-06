@@ -20,13 +20,16 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Token expired or invalid - clear auth data
       localStorage.removeItem('token')
       localStorage.removeItem('user')
-      
-      // Only redirect if not already on login/register page
-      if (!window.location.pathname.includes('/login') && 
-          !window.location.pathname.includes('/register')) {
+      window.dispatchEvent(new Event('auth:logout'))
+
+      const requestUrl = error.config?.url || ''
+      const isAuthCheck = requestUrl.includes('/auth/me')
+      const onAuthPage = window.location.pathname.includes('/login')
+        || window.location.pathname.includes('/register')
+
+      if (!isAuthCheck && !onAuthPage) {
         window.location.href = '/login'
       }
     }

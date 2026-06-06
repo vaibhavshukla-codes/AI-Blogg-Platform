@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import { getUserId, isSameUser } from '../lib/user'
 import { useToast } from './Toast'
 import { useConfirm } from './ConfirmDialog'
 
@@ -18,6 +20,25 @@ export default function Comments({ postId }) {
   const [showReplies, setShowReplies] = useState({}) // Track which comments have replies visible
   
   const MAX_REPLY_DEPTH = 5 // Maximum nesting level for replies
+  const commentTree = useMemo(() => {
+    const byId = new Map()
+    const roots = []
+
+    comments.forEach(comment => {
+      byId.set(comment._id, { ...comment, replies: [] })
+    })
+
+    byId.forEach(comment => {
+      const parentId = typeof comment.parent === 'object' ? comment.parent?._id : comment.parent
+      if (parentId && byId.has(parentId)) {
+        byId.get(parentId).replies.push(comment)
+      } else {
+        roots.push(comment)
+      }
+    })
+
+    return roots
+  }, [comments])
 
   const loadComments = async () => {
     try {
@@ -99,6 +120,11 @@ export default function Comments({ postId }) {
   }
 
   const startEdit = (comment) => {
+    if (!requireLoggedIn()) return
+    if (!isSameUser(user, comment.author?._id || comment.author)) {
+      toast.showWarning('You can only edit your own comments')
+      return
+    }
     setEditingId(comment._id)
     setEditContent(comment.content)
     setReplyTo(null) // Close any open reply forms
@@ -109,7 +135,16 @@ export default function Comments({ postId }) {
     setEditContent('')
   }
 
+  const requireLoggedIn = () => {
+    if (!user) {
+      toast.showWarning('Please log in to manage your comments')
+      return false
+    }
+    return true
+  }
+
   const updateComment = async (commentId) => {
+    if (!requireLoggedIn()) return
     if (!editContent.trim()) {
       toast.showWarning('Comment cannot be empty')
       return
@@ -131,6 +166,8 @@ export default function Comments({ postId }) {
   }
 
   const deleteComment = async (commentId) => {
+    if (!requireLoggedIn()) return
+
     const confirmed = await showConfirm({
       title: 'Delete Comment?',
       message: 'Are you sure you want to delete this comment?\nThis action cannot be undone.',
@@ -175,11 +212,12 @@ export default function Comments({ postId }) {
     setShowReplies(prev => ({ ...prev, [commentId]: !prev[commentId] }))
   }
 
-  const renderComment = (comment, depth = 0, parentId = null) => {
-    const isLiked = comment.likes?.some(id => id === user?.id) || false
-    const isDisliked = comment.dislikes?.some(id => id === user?.id) || false
-    const isAuthor = user && comment.author?._id === user.id
-    const canReply = user && !isAuthor && depth < MAX_REPLY_DEPTH // Limit reply depth
+  const renderComment = (comment, depth = 0) => {
+    const userId = getUserId(user)
+    const isLiked = comment.likes?.some((id) => String(id) === userId) || false
+    const isDisliked = comment.dislikes?.some((id) => String(id) === userId) || false
+    const isAuthor = user && isSameUser(user, comment.author?._id || comment.author)
+    const canReply = user && depth < MAX_REPLY_DEPTH
     
     // Count replies for this comment
     const replyCount = comment.replies?.length || 0
@@ -316,7 +354,7 @@ export default function Comments({ postId }) {
         )}
 
         {/* Render nested replies (collapsible) */}
-        {repliesVisible && comment.replies?.map(reply => renderComment(reply, depth + 1, comment._id))}
+        {repliesVisible && comment.replies?.map(reply => renderComment(reply, depth + 1))}
       </div>
     )
   }
@@ -347,7 +385,13 @@ export default function Comments({ postId }) {
         </form>
       ) : (
         <div className="mb-4 md:mb-6 p-3 md:p-4 bg-gray-50 rounded-lg border border-gray-200 text-center">
-          <p className="text-sm md:text-base text-gray-600">🔒 Please log in to comment.</p>
+          <p className="text-sm md:text-base text-gray-600">
+            🔒 Please{' '}
+            <Link to="/login" className="text-blue-600 hover:text-blue-800 font-medium">
+              log in
+            </Link>{' '}
+            to comment.
+          </p>
         </div>
       )}
 
@@ -359,7 +403,7 @@ export default function Comments({ postId }) {
             <p className="text-gray-400 text-sm">Be the first to share your thoughts!</p>
           </div>
         ) : (
-          comments.map(comment => renderComment(comment))
+          commentTree.map(comment => renderComment(comment))
         )}
       </div>
     </div>

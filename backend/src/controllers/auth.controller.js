@@ -18,8 +18,6 @@ async function register(req, res, next) {
   try {
     const { name, email, password } = req.body;
     
-    console.log('📝 Registration attempt:', { name, email, hasPassword: !!password });
-    
     if (!name || !email || !password) {
       res.status(400);
       throw new Error('Missing required fields');
@@ -28,15 +26,11 @@ async function register(req, res, next) {
     // Check if user already exists
     const exists = await User.findOne({ email });
     if (exists) {
-      console.log('⚠️  User already exists:', email);
       res.status(409);
       throw new Error('User already exists');
     }
     
-    console.log('✅ Creating new user...');
     const user = await User.create({ name, email, password });
-    console.log('✅ User created successfully:', { id: user._id, email: user.email });
-    
     const token = generateToken(user);
     
     res.status(201).json({
@@ -44,7 +38,6 @@ async function register(req, res, next) {
       token,
     });
   } catch (err) {
-    console.error('❌ Registration error:', err.message);
     next(err);
   }
 }
@@ -74,7 +67,15 @@ async function me(req, res, next) {
       res.status(404);
       throw new Error('User not found');
     }
-    res.json({ user });
+    res.json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        avatarUrl: user.avatarUrl,
+      },
+    });
   } catch (err) {
     next(err);
   }

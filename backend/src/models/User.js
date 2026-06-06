@@ -38,28 +38,25 @@ userSchema.pre('deleteOne', { document: true, query: false }, async function(nex
     const Comment = mongoose.model('Comment');
     const Notification = mongoose.model('Notification');
     
-    console.log(`🗑️  Cascading delete for user: ${this.email}`);
-    
-    // Delete all posts by this user (which will cascade to comments via Post model)
-    const deletedPosts = await Post.deleteMany({ author: this._id });
-    console.log(`   ✓ Deleted ${deletedPosts.deletedCount} posts`);
-    
-    // Delete all comments by this user
-    const deletedComments = await Comment.deleteMany({ author: this._id });
-    console.log(`   ✓ Deleted ${deletedComments.deletedCount} comments`);
-    
-    // Delete all notifications for this user
-    const deletedNotifications = await Notification.deleteMany({ user: this._id });
-    console.log(`   ✓ Deleted ${deletedNotifications.deletedCount} notifications`);
-    
+    const posts = await Post.find({ author: this._id });
+    for (const post of posts) {
+      await post.deleteOne();
+    }
+
+    const comments = await Comment.find({ author: this._id });
+    for (const comment of comments) {
+      await comment.deleteOne();
+    }
+
+    await Notification.deleteMany({ user: this._id });
+
     next();
   } catch (error) {
-    console.error('❌ Error in user cascade delete:', error);
+    console.error('User cascade delete error:', error);
     next(error);
   }
 });
 
 module.exports = mongoose.model('User', userSchema);
-
 
 

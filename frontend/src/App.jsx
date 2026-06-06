@@ -14,8 +14,11 @@ import { ToastProvider } from './components/Toast'
 import { ConfirmDialogProvider } from './components/ConfirmDialog'
 
 function PrivateRoute({ children, roles }) {
-  const { user } = useAuth()
-  if (!user) return <Navigate to="/login" replace />
+  const { user, token, authLoading } = useAuth()
+  if (authLoading) {
+    return <div className="text-center py-12 text-gray-600">Checking session...</div>
+  }
+  if (!user || !token) return <Navigate to="/login" replace />
   if (roles && !roles.includes(user.role)) return <Navigate to="/" replace />
   return children
 }
@@ -208,6 +211,7 @@ export default function App() {
                   <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
                   <Route path="/admin" element={<PrivateRoute roles={["admin"]}><Admin /></PrivateRoute>} />
                   <Route path="/editor" element={<PrivateRoute><PostEditor /></PrivateRoute>} />
+                  <Route path="/editor/:slug" element={<PrivateRoute><PostEditor /></PrivateRoute>} />
                   <Route path="/post/:slug" element={<PostView />} />
                 </Routes>
               </main>

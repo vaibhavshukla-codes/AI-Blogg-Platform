@@ -19,21 +19,16 @@ commentSchema.pre('deleteOne', { document: true, query: false }, async function(
     const Comment = mongoose.model('Comment');
     const Notification = mongoose.model('Notification');
     
-    console.log(`🗑️  Cascading delete for comment: ${this._id}`);
-    
-    // Delete all child comments (replies)
-    const deletedReplies = await Comment.deleteMany({ parent: this._id });
-    console.log(`   ✓ Deleted ${deletedReplies.deletedCount} reply comments`);
-    
-    // Delete notifications related to this comment
-    const deletedNotifications = await Notification.deleteMany({ 
-      'meta.commentId': this._id.toString() 
-    });
-    console.log(`   ✓ Deleted ${deletedNotifications.deletedCount} notifications`);
-    
+    const replies = await Comment.find({ parent: this._id });
+    for (const reply of replies) {
+      await reply.deleteOne();
+    }
+
+    await Notification.deleteMany({ 'meta.commentId': this._id.toString() });
+
     next();
   } catch (error) {
-    console.error('❌ Error in comment cascade delete:', error);
+    console.error('Comment cascade delete error:', error);
     next(error);
   }
 });
@@ -46,25 +41,21 @@ commentSchema.pre('findOneAndDelete', async function(next) {
     const doc = await this.model.findOne(this.getFilter());
     
     if (doc) {
-      console.log(`🗑️  Cascading delete for comment: ${doc._id}`);
-      
-      const deletedReplies = await Comment.deleteMany({ parent: doc._id });
-      console.log(`   ✓ Deleted ${deletedReplies.deletedCount} reply comments`);
-      
-      const deletedNotifications = await Notification.deleteMany({ 
-        'meta.commentId': doc._id.toString() 
-      });
-      console.log(`   ✓ Deleted ${deletedNotifications.deletedCount} notifications`);
+      const replies = await Comment.find({ parent: doc._id });
+      for (const reply of replies) {
+        await reply.deleteOne();
+      }
+
+      await Notification.deleteMany({ 'meta.commentId': doc._id.toString() });
     }
-    
+
     next();
   } catch (error) {
-    console.error('❌ Error in comment cascade delete:', error);
+    console.error('Comment cascade delete error:', error);
     next(error);
   }
 });
 
 module.exports = mongoose.model('Comment', commentSchema);
-
 
 

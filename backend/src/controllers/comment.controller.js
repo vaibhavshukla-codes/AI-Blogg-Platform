@@ -1,5 +1,6 @@
 const Comment = require('../models/Comment');
 const Post = require('../models/Post');
+const { createNotification } = require('../utils/notifications');
 
 async function addComment(req, res, next) {
   try {
@@ -13,6 +14,14 @@ async function addComment(req, res, next) {
       res.status(404);
       throw new Error('Post not found');
     }
+    if (parent) {
+      const parentComment = await Comment.findOne({ _id: parent, post: postId });
+      if (!parentComment) {
+        res.status(400);
+        throw new Error('Parent comment not found for this post');
+      }
+    }
+
     const comment = await Comment.create({ 
       post: postId, 
       author: req.user.id, 
@@ -22,7 +31,17 @@ async function addComment(req, res, next) {
     
     // Populate author info before returning
     await comment.populate('author', 'name avatarUrl');
-    
+
+    const postAuthorId = String(post.author);
+    if (postAuthorId !== req.user.id) {
+      await createNotification({
+        userId: post.author,
+        type: 'comment',
+        message: `${req.user.name || 'Someone'} commented on "${post.title}"`,
+        meta: { postId: post._id, commentId: comment._id, slug: post.slug },
+      });
+    }
+
     res.status(201).json({ comment });
   } catch (err) {
     next(err);
@@ -32,7 +51,7 @@ async function addComment(req, res, next) {
 async function getComments(req, res, next) {
   try {
     const { postId } = req.params;
-    const comments = await Comment.find({ post: postId })
+    const comments = await Comment.find({ post: postId, status: { $ne: 'hidden' } })
       .populate('author', 'name avatarUrl')
       .sort('createdAt');
     res.json({ comments });
@@ -45,6 +64,11 @@ async function toggleReaction(req, res, next) {
   try {
     const { id } = req.params;
     const { action } = req.body; // like|dislike
+    if (!['like', 'dislike'].includes(action)) {
+      res.status(400);
+      throw new Error('Invalid reaction action');
+    }
+
     const comment = await Comment.findById(id);
     if (!comment) {
       res.status(404);
@@ -89,6 +113,10 @@ async function updateComment(req, res, next) {
   try {
     const { id } = req.params;
     const { content } = req.body;
+    if (typeof content !== 'string' || !content.trim()) {
+      res.status(400);
+      throw new Error('Comment content is required');
+    }
     
     const comment = await Comment.findById(id);
     if (!comment) {
@@ -139,7 +167,16 @@ async function moderate(req, res, next) {
   try {
     const { id } = req.params;
     const { status } = req.body; // visible|hidden
-    const comment = await Comment.findByIdAndUpdate(id, { status }, { new: true });
+    if (!['visible', 'hidden'].includes(status)) {
+      res.status(400);
+      throw new Error('Invalid comment status');
+    }
+
+    const comment = await Comment.findByIdAndUpdate(id, { status }, { new: true, runValidators: true });
+    if (!comment) {
+      res.status(404);
+      throw new Error('Comment not found');
+    }
     res.json({ comment });
   } catch (err) {
     next(err);
@@ -169,7 +206,6 @@ module.exports = {
   moderate,
   getAllComments 
 };
-
 
 
 

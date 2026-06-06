@@ -1,21 +1,43 @@
 const slugify = require('slugify');
 const Post = require('../models/Post');
+const { createNotification } = require('../utils/notifications');
 
 function estimateReadingTime(content) {
   const words = content ? content.trim().split(/\s+/).length : 0;
   return Math.max(1, Math.ceil(words / 200));
 }
 
+async function generateUniqueSlug(title, existingPostId) {
+  const baseSlug = slugify(title, { lower: true, strict: true }) || `post-${Date.now()}`;
+  let slug = baseSlug;
+  let suffix = 2;
+
+  while (true) {
+    const filter = { slug };
+    if (existingPostId) filter._id = { $ne: existingPostId };
+
+    const existing = await Post.findOne(filter).select('_id');
+    if (!existing) return slug;
+
+    slug = `${baseSlug}-${suffix}`;
+    suffix += 1;
+  }
+}
+
 async function createPost(req, res, next) {
   try {
     const { title, content, category, tags, coverImageUrl, summary, metaDescription, status } = req.body;
-    console.log('Creating post. Cover Image URL received:', coverImageUrl);
     if (!title || !content) {
       res.status(400);
       throw new Error('Title and content are required');
     }
-    const slug = slugify(title, { lower: true, strict: true });
+    const slug = await generateUniqueSlug(title);
     const readingTimeMinutes = estimateReadingTime(content);
+    if (status && !['draft', 'pending', 'published', 'rejected'].includes(status)) {
+      res.status(400);
+      throw new Error('Invalid post status');
+    }
+
     const post = await Post.create({
       title,
       slug,
@@ -29,9 +51,6 @@ async function createPost(req, res, next) {
       author: req.user.id,
       status: status || 'draft',
     });
-    console.log('Post created with coverImageUrl:', post.coverImageUrl);
-    
-    // Populate author information before sending response
     await post.populate('author', 'name avatarUrl email');
     
     res.status(201).json({ post });
@@ -48,8 +67,12 @@ async function getPosts(req, res, next) {
     if (tag) filter.tags = tag;
     if (category) filter.category = category;
     if (author) filter.author = author;
-    if (status) filter.status = status;
-    
+    if (status) {
+      filter.status = status;
+    } else if (!req.user || req.user.role !== 'admin') {
+      filter.status = 'published';
+    }
+
     const data = await Post.find(filter)
       .populate('author', 'name avatarUrl email')
       .sort(sort)
@@ -70,7 +93,16 @@ async function getPostBySlug(req, res, next) {
       res.status(404);
       throw new Error('Post not found');
     }
-    req.post = post; // for canModifyPost
+
+    const authorId = String(post.author?._id || post.author);
+    const isOwner = req.user && authorId === req.user.id;
+    const isAdmin = req.user?.role === 'admin';
+    if (post.status !== 'published' && !isOwner && !isAdmin) {
+      res.status(404);
+      throw new Error('Post not found');
+    }
+
+    req.post = post;
     res.json({ post });
   } catch (err) {
     next(err);
@@ -85,8 +117,6 @@ async function updatePost(req, res, next) {
       throw new Error('Post not found');
     }
     req.post = existing;
-    console.log('Updating post. Cover Image URL received:', req.body.coverImageUrl);
-    console.log('Existing post coverImageUrl:', existing.coverImageUrl);
     const { title, content } = req.body;
     if (title) existing.title = title;
     if (content) {
@@ -96,22 +126,18 @@ async function updatePost(req, res, next) {
     ['category', 'tags', 'coverImageUrl', 'summary', 'metaDescription', 'status'].forEach((k) => {
       if (req.body[k] !== undefined) existing[k] = req.body[k];
     });
+    if (req.body.status !== undefined && !['draft', 'pending', 'published', 'rejected'].includes(req.body.status)) {
+      res.status(400);
+      throw new Error('Invalid post status');
+    }
+
     if (title) {
-      const newSlug = slugify(title, { lower: true, strict: true });
-      // Check if slug changed and if new slug is unique
+      const newSlug = await generateUniqueSlug(title, existing._id);
       if (newSlug !== existing.slug) {
-        const slugExists = await Post.findOne({ slug: newSlug });
-        if (slugExists) {
-          res.status(409);
-          throw new Error('A post with this title already exists');
-        }
         existing.slug = newSlug;
       }
     }
     await existing.save();
-    console.log('Post updated with coverImageUrl:', existing.coverImageUrl);
-    
-    // Populate author information
     await existing.populate('author', 'name avatarUrl email');
     
     res.json({ post: existing });
@@ -139,6 +165,11 @@ async function toggleReaction(req, res, next) {
   try {
     const { slug } = req.params;
     const { action } = req.body; // like|dislike
+    if (!['like', 'dislike'].includes(action)) {
+      res.status(400);
+      throw new Error('Invalid reaction action');
+    }
+
     const post = await Post.findOne({ slug });
     if (!post) {
       res.status(404);
@@ -187,8 +218,30 @@ async function setStatus(req, res, next) {
   try {
     const { slug } = req.params;
     const { status, reason } = req.body; // pending|published|rejected
-    const post = await Post.findOneAndUpdate({ slug }, { status, moderationReason: reason }, { new: true });
+    if (!['draft', 'pending', 'published', 'rejected'].includes(status)) {
+      res.status(400);
+      throw new Error('Invalid post status');
+    }
+
+    const post = await Post.findOneAndUpdate(
+      { slug },
+      { status, moderationReason: reason },
+      { new: true, runValidators: true }
+    );
     if (!post) { res.status(404); throw new Error('Post not found'); }
+
+    await post.populate('author', 'name email');
+    const authorId = String(post.author?._id || post.author);
+    if (authorId && authorId !== String(req.user?.id)) {
+      const statusLabel = status === 'published' ? 'approved' : status;
+      await createNotification({
+        userId: post.author._id,
+        type: 'post_status',
+        message: `Your post "${post.title}" was ${statusLabel}.`,
+        meta: { postId: post._id, slug: post.slug, status, reason },
+      });
+    }
+
     res.json({ post });
   } catch (err) {
     next(err);
@@ -224,6 +277,3 @@ async function incrementViews(req, res, next) {
 }
 
 module.exports = { createPost, getPosts, getPostBySlug, updatePost, deletePost, toggleReaction, setStatus, incrementViews };
-
-
-

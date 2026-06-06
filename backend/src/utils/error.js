@@ -1,3 +1,5 @@
+const { isAllowedOrigin } = require('./cors');
+
 function notFound(req, res, next) {
   const error = new Error(`Not Found - ${req.originalUrl}`);
   res.status(404);
@@ -8,7 +10,7 @@ function notFound(req, res, next) {
 function errorHandler(err, req, res, next) {
   // Ensure CORS headers are set even on errors
   const origin = req.headers.origin;
-  if (origin) {
+  if (origin && isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
@@ -24,6 +26,4 @@ function errorHandler(err, req, res, next) {
 }
 
 module.exports = { notFound, errorHandler };
-
-
 

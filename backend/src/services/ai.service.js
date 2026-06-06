@@ -1,119 +1,158 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
+const BLOG_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string', description: 'Engaging blog post title, 40-80 characters' },
+    content: {
+      type: 'string',
+      description: 'Full blog HTML using h2, h3, p, ul, li, strong, em. At least 300 words.',
+    },
+    summary: { type: 'string', description: '1-2 sentence summary, 100-200 characters' },
+    tags: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '5-8 lowercase keywords',
+    },
+    category: {
+      type: 'string',
+      description: 'One of: Technology, Health, Business, Lifestyle, Education, Science, Travel, Food, Sports, Entertainment',
+    },
+  },
+  required: ['title', 'content', 'summary', 'tags', 'category'],
+};
+
+const MODEL_CANDIDATES = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+];
+
+const SYSTEM_PROMPT = `You are a professional blog content generator. Generate a complete, informative blog post for the given topic.
+
+Rules:
+- content must be valid HTML with <h2>, <h3>, <p>, <ul>, <li>, <strong>, and <em> tags
+- content must be at least 300 words
+- tags must be lowercase strings (use hyphens for multi-word tags)
+- category must be exactly one of the allowed values in the schema`;
+
 function getClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error('GEMINI_API_KEY not set in environment variables');
   return new GoogleGenerativeAI(apiKey);
 }
 
-// Retry function with exponential backoff
 async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 1000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn();
     } catch (error) {
       const isLastAttempt = i === maxRetries - 1;
-      const is503Error = error.message?.includes('503') || error.message?.includes('overloaded');
-      const is429Error = error.message?.includes('429') || error.message?.includes('Rate limit');
-      
-      if (isLastAttempt || (!is503Error && !is429Error)) {
+      const retryable = error.message?.includes('503')
+        || error.message?.includes('overloaded')
+        || error.message?.includes('429')
+        || error.message?.includes('Rate limit');
+
+      if (isLastAttempt || !retryable) {
         throw error;
       }
-      
+
       const delay = initialDelay * Math.pow(2, i);
-      console.log(`⏳ Retry attempt ${i + 1}/${maxRetries} after ${delay}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
+}
+
+async function generateWithModel(genAI, modelName, prompt) {
+  const model = genAI.getGenerativeModel({
+    model: modelName,
+    generationConfig: {
+      temperature: 0.7,
+      topP: 0.95,
+      maxOutputTokens: 8192,
+      responseMimeType: 'application/json',
+      responseSchema: BLOG_RESPONSE_SCHEMA,
+    },
+  });
+
+  const fullPrompt = `${SYSTEM_PROMPT}\n\nTopic: ${prompt}\n\nReturn the blog post as JSON matching the schema.`;
+  const result = await model.generateContent(fullPrompt);
+  const response = result.response;
+
+  if (response.promptFeedback?.blockReason) {
+    throw new Error('Your prompt was blocked by safety filters. Try rephrasing the topic.')
+  }
+
+  if (!response.candidates?.length) {
+    throw new Error('AI returned no content. Please try a different prompt.')
+  }
+
+  let text
+  try {
+    text = response.text()
+  } catch (textError) {
+    const finishReason = response.candidates[0]?.finishReason
+    throw new Error(
+      finishReason === 'SAFETY'
+        ? 'Content was blocked by safety filters. Try a different prompt.'
+        : 'AI returned an unreadable response. Please try again.'
+    )
+  }
+
+  if (!text?.trim()) {
+    throw new Error('AI returned empty content. Please try again.')
+  }
+
+  return text
 }
 
 async function generateBlogFromPrompt(prompt) {
-  try {
-    const genAI = getClient();
-    // Use gemini-2.5-flash - stable, fast, and perfect for blog generation
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-2.5-flash',
-      generationConfig: {
-        temperature: 0.7,
-        topP: 0.95,
-        maxOutputTokens: 2048,
+  const genAI = getClient();
+  let lastError;
+
+  for (const modelName of MODEL_CANDIDATES) {
+    try {
+      const text = await retryWithBackoff(() => generateWithModel(genAI, modelName, prompt));
+      return text;
+    } catch (error) {
+      lastError = error;
+      const notFound = error.message?.includes('404')
+        || error.message?.includes('not found')
+        || error.message?.includes('is not supported');
+
+      if (notFound) {
+        continue;
       }
-    });
-    
-    const systemPrompt = `You are a professional blog content generator. Generate a complete blog post based on the user's topic.
-
-CRITICAL INSTRUCTIONS:
-1. Return ONLY valid JSON - no markdown, no code blocks, no extra text
-2. Start with { and end with }
-3. Use proper HTML tags in content field
-4. All fields are required
-
-JSON Format (copy this structure exactly):
-{
-  "title": "Write an engaging, clear title here (40-80 characters)",
-  "content": "<h2>First Section</h2><p>Write well-structured content with proper HTML tags. Use headings (h2, h3), paragraphs (p), lists (ul, li), bold (strong), and italic (em) tags.</p><h2>Second Section</h2><p>Continue with informative, well-formatted content that provides value to readers.</p>",
-  "summary": "Write 1-2 compelling sentences that summarize the post and hook the reader.",
-  "tags": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
-  "category": "Choose ONE: Technology, Health, Business, Lifestyle, Education, Science, Travel, Food, Sports, or Entertainment"
-}
-
-Requirements:
-- title: Clear, engaging (40-80 chars)
-- content: Rich HTML with <h2>, <h3>, <p>, <ul>, <li>, <strong>, <em> tags. Minimum 300 words.
-- summary: 1-2 sentences (100-200 chars)
-- tags: 5-8 lowercase keywords (use hyphens for multi-word: "machine-learning")
-- category: Single category name
-
-Your response must be valid JSON only. No additional text before or after the JSON object.`;
-    
-    const fullPrompt = `${systemPrompt}\n\n---\n\nTopic: ${prompt}\n\nGenerate the blog post as JSON:`;
-    
-    // Use retry logic for API calls
-    const text = await retryWithBackoff(async () => {
-      console.log('📡 Calling Gemini API...');
-      const result = await model.generateContent(fullPrompt);
-      const response = await result.response;
-      return response.text();
-    }, 3, 1000);
-    
-    console.log('✅ Gemini API call successful');
-    return text;
-  } catch (error) {
-    console.error('Gemini API Error (Full):', error);
-    console.error('Error message:', error.message);
-    console.error('Error status:', error.status);
-    console.error('Error details:', error.details);
-    
-    if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('invalid API key')) {
-      throw new Error('Gemini API key is invalid. Please check your GEMINI_API_KEY environment variable. Get your key at https://makersuite.google.com/app/apikey');
+      break;
     }
-    
-    if (error.message?.includes('503') || error.message?.includes('overloaded') || error.message?.includes('Service Unavailable')) {
-      throw new Error('The AI service is currently overloaded. Please try again in a few moments. You can write your post manually in the meantime.');
-    }
-    
-    if (error.message?.includes('quota') || error.message?.includes('RESOURCE_EXHAUSTED')) {
-      throw new Error('Gemini API quota exceeded. Please check your quota at https://console.cloud.google.com/apis/api/generativelanguage.googleapis.com/quotas');
-    }
-    
-    if (error.message?.includes('429') || error.message?.includes('Rate limit')) {
-      throw new Error('Rate limit exceeded. Please wait a moment and try again.');
-    }
-    
-    if (error.message?.includes('404') || error.message?.includes('not found')) {
-      throw new Error('The AI model is not available. Please contact support if this persists.');
-    }
-    
-    // Log the error stack for debugging
-    if (error.stack) {
-      console.error('Error stack:', error.stack);
-    }
-    
-    throw new Error(`AI generation failed: ${error.message || 'Unknown error'}. You can write your post manually or try again later.`);
   }
+
+  const error = lastError || new Error('AI generation failed');
+  console.error('Gemini API Error:', error.message);
+
+  if (error.message?.includes('CONSUMER_SUSPENDED') || error.message?.includes('has been suspended')) {
+    throw new Error(
+      'Your Gemini API key is suspended by Google. Create a new key at https://aistudio.google.com/apikey (use an AIza... key), update backend/.env, and restart the server.'
+    );
+  }
+
+  if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('invalid API key')) {
+    throw new Error('Gemini API key is invalid. Check GEMINI_API_KEY in backend/.env — get a key at https://aistudio.google.com/apikey');
+  }
+
+  if (error.message?.includes('503') || error.message?.includes('overloaded')) {
+    throw new Error('The AI service is overloaded. Please try again in a few moments.');
+  }
+
+  if (error.message?.includes('quota') || error.message?.includes('RESOURCE_EXHAUSTED')) {
+    throw new Error('Gemini API quota exceeded. Check your usage at https://aistudio.google.com/');
+  }
+
+  if (error.message?.includes('429') || error.message?.includes('Rate limit')) {
+    throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+  }
+
+  throw new Error(`AI generation failed: ${error.message || 'Unknown error'}. You can write your post manually or try again later.`);
 }
 
 module.exports = { generateBlogFromPrompt };
-
-
-

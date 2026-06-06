@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { getEmailError } from '../lib/validateEmail'
 
 export default function Register() {
   const { register } = useAuth()
@@ -10,14 +11,14 @@ export default function Register() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
+  const [emailError, setEmailError] = useState('')
   const [loading, setLoading] = useState(false)
 
   const onSubmit = async (e) => {
     e.preventDefault()
     setError('')
 
-    // Validation
-    if (!name.trim() || !email.trim() || !password.trim() || !confirmPassword.trim()) {
+    if (!name.trim() || !password.trim() || !confirmPassword.trim()) {
       setError('Please fill in all fields')
       return
     }
@@ -27,10 +28,11 @@ export default function Register() {
       return
     }
 
-    if (!email.includes('@')) {
-      setError('Please enter a valid email')
-      return
-    }
+    const trimmedEmail = email.trim()
+    const emailValidationError = getEmailError(trimmedEmail)
+    setEmailError(emailValidationError)
+
+    if (emailValidationError) return
 
     if (password.length < 6) {
       setError('Password must be at least 6 characters')
@@ -44,7 +46,7 @@ export default function Register() {
 
     setLoading(true)
     try {
-      await register(name, email, password)
+      await register(name.trim(), trimmedEmail, password)
       nav('/dashboard')
     } catch (e) {
       setError(e.response?.data?.message || 'Registration failed. Please try again.')
@@ -88,12 +90,22 @@ export default function Register() {
             </label>
             <input
               type="email"
-              className="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              autoComplete="email"
+              className={`w-full border p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                emailError ? 'border-red-500' : 'border-gray-300'
+              }`}
               placeholder="you@example.com"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                if (emailError) setEmailError('')
+              }}
+              onBlur={() => setEmailError(getEmailError(email))}
               disabled={loading}
             />
+            {emailError && (
+              <p className="text-red-500 text-sm mt-1">{emailError}</p>
+            )}
           </div>
 
           <div>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { getEmailError } from '../lib/validateEmail'
 
 export default function Login() {
   const { login } = useAuth()
@@ -8,26 +9,27 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [emailError, setEmailError] = useState('')
   const [loading, setLoading] = useState(false)
 
   const onSubmit = async (e) => {
     e.preventDefault()
     setError('')
 
-    // Validation
-    if (!email.trim() || !password.trim()) {
-      setError('Please fill in all fields')
-      return
-    }
+    const trimmedEmail = email.trim()
+    const emailValidationError = getEmailError(trimmedEmail)
+    setEmailError(emailValidationError)
 
-    if (!email.includes('@')) {
-      setError('Please enter a valid email')
+    if (emailValidationError) return
+
+    if (!password.trim()) {
+      setError('Please enter your password')
       return
     }
 
     setLoading(true)
     try {
-      await login(email, password)
+      await login(trimmedEmail, password)
       nav('/dashboard')
     } catch (e) {
       setError(e.response?.data?.message || 'Login failed. Please check your credentials.')
@@ -57,12 +59,22 @@ export default function Login() {
             </label>
             <input
               type="email"
-              className="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              autoComplete="email"
+              className={`w-full border p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                emailError ? 'border-red-500' : 'border-gray-300'
+              }`}
               placeholder="you@example.com"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                if (emailError) setEmailError('')
+              }}
+              onBlur={() => setEmailError(getEmailError(email))}
               disabled={loading}
             />
+            {emailError && (
+              <p className="text-red-500 text-sm mt-1">{emailError}</p>
+            )}
           </div>
 
           <div>
